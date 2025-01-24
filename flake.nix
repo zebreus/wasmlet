@@ -56,19 +56,19 @@
           ];
         };
 
-        packages.default =
+        packages.wasmlet =
           (pkgs.makeRustPlatform {
             cargo = rustToolchain;
             rustc = rustToolchain;
           }).buildRustPackage
             {
-              pname = "wasmer-interview-challenge";
+              pname = "wasmlet";
               version = "0.1.0";
 
-              src = ./wasmer-interview-challenge;
+              src = ./wasmlet;
 
               cargoLock = {
-                lockFile = ./Cargo.lock;
+                lockFile = ./wasmlet/Cargo.lock;
               };
 
               nativeBuildInputs = [
@@ -81,6 +81,7 @@
                 license = pkgs.lib.licenses.agpl3Plus;
               };
             };
+        packages.default = packages.wasmlet;
 
         formatter = pkgs.nixfmt-rfc-style;
       }
