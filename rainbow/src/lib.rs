@@ -4,10 +4,12 @@ use std::{
 };
 mod transformer;
 
-/// Maps the address of a shared buffer to a reference counted buffer.
+/// A shared buffer that can be accessed by the host.
 ///
-/// Buffers are wrapped in a reference counted smart pointer to ensure that they are not freed while in use.
-static SHARED_BUFFERS: LazyLock<Mutex<HashMap<usize, Arc<Box<[u8]>>>>> =
+/// The guest holds a clone of the rc while using the buffer to make sure that the host does not free the buffer while the guest is still using it.
+type SharedBuffer = Arc<Box<[u8]>>;
+/// Keeps track of all shared buffers.
+static SHARED_BUFFERS: LazyLock<Mutex<HashMap<usize, SharedBuffer>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Get a buffer that can be written to.
@@ -83,11 +85,11 @@ pub extern "C" fn process(input_buffer: usize) -> ProcessingResult {
     let boxed_bytes = output.into_boxed_str().into_boxed_bytes();
     let output_length = boxed_bytes.len();
     let output_address = share_buffer(boxed_bytes);
-    return ProcessingResult {
+    ProcessingResult {
         success,
         pointer: output_address,
         length: output_length,
-    };
+    }
 }
 
 /// Decode the input buffer and return the result with String as the error type.
@@ -119,7 +121,7 @@ mod tests {
             unsafe { std::slice::from_raw_parts_mut(shared_pointer as *mut u8, input_bytes.len()) };
         shared_buffer.copy_from_slice(input_bytes);
         let result = process(shared_pointer);
-        assert_eq!(result.success, true);
+        assert!(result.success);
         let output =
             unsafe { std::slice::from_raw_parts(result.pointer as *const u8, result.length) };
         let output = std::str::from_utf8(output).unwrap();
