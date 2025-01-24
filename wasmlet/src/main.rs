@@ -1,3 +1,7 @@
+//! # WASMlet
+//!
+//! A simple program that formats text using WASM plugins.
+
 use clap::Parser;
 use std::path::PathBuf;
 
