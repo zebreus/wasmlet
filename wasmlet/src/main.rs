@@ -1,3 +1,20 @@
+use clap::Parser;
+use std::path::PathBuf;
+
+/// Simple program to greet a person
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// The text that should get printed
+    text: String,
+
+    /// WASM plugins that should process the text
+    #[arg(short, long)]
+    plugins: Vec<PathBuf>,
+}
+
 fn main() {
-    println!("Hello, world!");
+    let args = Args::parse();
+
+    println!("{}", args.text);
 }
