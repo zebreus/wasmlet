@@ -43,10 +43,10 @@ fn share_buffer(buffer: Box<[u8]>) -> usize {
 
 /// Free a buffer that was allocated with `allocate_shared_buffer`.
 ///
-/// If the guest is currently using the buffer, it will be freed when the guest is done with it.
-///
 /// - Returns 0 if the buffer was successfully freed.
 /// - Returns 1 if the buffer is not currently allocated.
+///
+/// If the guest is currently using the buffer, it will also return 0, but the buffer will be freed once the guest is done with it.
 #[unsafe(no_mangle)]
 pub extern "C" fn free_shared_buffer(pointer: usize) -> u8 {
     let buffer = SHARED_BUFFERS.lock().unwrap().remove(&pointer);
@@ -57,7 +57,7 @@ pub extern "C" fn free_shared_buffer(pointer: usize) -> u8 {
 }
 
 #[repr(C)]
-pub struct Result {
+pub struct ProcessingResult {
     /// Whether the operation was successfull.
     ///
     /// If false, the pointer points to an error message.
@@ -74,20 +74,8 @@ pub struct Result {
 /// Process the input buffer and return a new buffer.
 ///
 #[unsafe(no_mangle)]
-pub extern "C" fn process(input_ptr: usize) -> Result {
-    let input = SHARED_BUFFERS
-        .lock()
-        // TODO: Maybe handle error
-        .unwrap()
-        .get(&input_ptr)
-        // TODO: Handle error
-        .unwrap()
-        .clone();
-
-    // TODO: Handle error
-    let input = std::str::from_utf8(&input).unwrap();
-
-    let (success, output) = match transformer::rainbow_text(input) {
+pub extern "C" fn process(input_buffer: usize) -> ProcessingResult {
+    let (success, output) = match process_to_result(input_buffer) {
         Ok(output) => (true, output),
         Err(error) => (false, error),
     };
@@ -95,11 +83,27 @@ pub extern "C" fn process(input_ptr: usize) -> Result {
     let boxed_bytes = output.into_boxed_str().into_boxed_bytes();
     let output_length = boxed_bytes.len();
     let output_address = share_buffer(boxed_bytes);
-    return Result {
+    return ProcessingResult {
         success,
         pointer: output_address,
         length: output_length,
     };
+}
+
+/// Decode the input buffer and return the result with String as the error type.
+fn process_to_result(input_buffer: usize) -> Result<String, String> {
+    let input = SHARED_BUFFERS
+        .lock()
+        .map_err(|e| e.to_string())?
+        .get(&input_buffer)
+        .ok_or(
+            "The input buffer does not exist. Use `allocate_shared_buffer` to allocate a buffer.",
+        )?
+        .clone();
+
+    let input = std::str::from_utf8(&input).map_err(|e| e.to_string())?;
+
+    transformer::rainbow_text(input)
 }
 
 #[cfg(test)]
@@ -107,7 +111,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn colors_text() {
+    fn how_the_host_would_use_this() {
         let input = "Hello, world!";
         let input_bytes = input.as_bytes();
         let shared_pointer = allocate_shared_buffer(input_bytes.len());
