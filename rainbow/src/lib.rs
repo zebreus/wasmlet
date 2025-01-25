@@ -45,17 +45,14 @@ fn share_buffer(buffer: Box<[u8]>) -> *const u8 {
 
 /// Free a buffer that was allocated with `allocate_shared_buffer`.
 ///
-/// - Returns 0 if the buffer was successfully freed.
-/// - Returns 1 if the buffer is not currently allocated.
+/// - Returns false if the buffer is not currently allocated or an error occurred.
+/// - Returns true if the buffer was successfully freed.
 ///
 /// If the guest is currently using the buffer, it will also return 0, but the buffer will be freed once the guest is done with it.
 #[unsafe(no_mangle)]
-pub extern "C" fn free_shared_buffer(pointer: usize) -> u8 {
+pub extern "C" fn free_shared_buffer(pointer: usize) -> bool {
     let buffer = SHARED_BUFFERS.lock().unwrap().remove(&(pointer as usize));
-    match buffer {
-        Some(_) => 0,
-        None => 1,
-    }
+    return buffer.is_some();
 }
 
 #[repr(C)]
