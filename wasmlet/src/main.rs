@@ -4,6 +4,7 @@
 
 use clap::Parser;
 use std::path::PathBuf;
+mod plugin;
 
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
