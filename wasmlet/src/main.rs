@@ -26,6 +26,8 @@
 //!
 //! Expected output:
 //!
+//! ![expected-output](https://github.com/user-attachments/assets/28f5eea0-2c33-4d7d-bdfc-787c1d2513e1)
+//!
 #![feature(error_generic_member_access)]
 
 use clap::Parser;
