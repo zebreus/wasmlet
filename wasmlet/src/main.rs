@@ -84,5 +84,5 @@ fn main() -> ExitCode {
     };
 
     println!("{}", result);
-    return 0.into();
+    0.into()
 }

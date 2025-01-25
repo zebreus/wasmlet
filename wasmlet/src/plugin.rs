@@ -12,8 +12,10 @@ pub enum PluginError {
     FailedToLoadModule(std::io::Error),
     #[error("Failed to compile plugin: {0}")]
     CompileError(#[from] CompileError),
+    // Clippy recommended that we box the error and I agree with the reasoning
+    // https://rust-lang.github.io/rust-clippy/master/index.html#result_large_err
     #[error("Failed to instantiate plugin: {0}")]
-    InstantiationError(#[from] InstantiationError),
+    InstantiationError(#[from] Box<InstantiationError>),
     #[error("The plugin does not provide the required function `{0}` in its exports ({1})")]
     PluginDoesNotExportRequiredFunction(String, ExportError),
     #[error("The plugin does not export memory: `memory`")]
@@ -52,7 +54,7 @@ impl Plugin {
 
         let mut store = Store::default();
         let module = Module::new(&store, &wasm_bytes)?;
-        let instance = Instance::new(&mut store, &module, &imports! {})?;
+        let instance = Instance::new(&mut store, &module, &imports! {}).map_err(Box::new)?;
 
         let allocate_shared_buffer = instance
             .exports
@@ -85,13 +87,13 @@ impl Plugin {
             .map_err(PluginError::PluginDoesNotExportMemory)?
             .clone();
 
-        return Ok(Plugin {
+        Ok(Plugin {
             allocate_shared_buffer,
             free_shared_buffer,
             process,
             store,
             memory,
-        });
+        })
     }
 
     /// Create a shared buffer in guest memory.

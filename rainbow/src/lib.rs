@@ -22,7 +22,7 @@ static SHARED_BUFFERS: LazyLock<Mutex<HashMap<usize, SharedBuffer>>> =
 #[unsafe(no_mangle)]
 pub extern "C" fn allocate_shared_buffer(size: usize) -> usize {
     // TODO: Convert to `new_zeroed_slice` once it's stabilized.
-    let mut buffer = Box::<[u8]>::new_uninit_slice(size as usize);
+    let mut buffer = Box::<[u8]>::new_uninit_slice(size);
     for byte in buffer.iter_mut() {
         let _ = *byte.write(0);
     }
@@ -51,8 +51,8 @@ fn share_buffer(buffer: Box<[u8]>) -> *const u8 {
 /// If the guest is currently using the buffer, it will also return 0, but the buffer will be freed once the guest is done with it.
 #[unsafe(no_mangle)]
 pub extern "C" fn free_shared_buffer(pointer: usize) -> bool {
-    let buffer = SHARED_BUFFERS.lock().unwrap().remove(&(pointer as usize));
-    return buffer.is_some();
+    let buffer = SHARED_BUFFERS.lock().unwrap().remove(&{ pointer });
+    buffer.is_some()
 }
 
 #[repr(C)]
@@ -86,7 +86,7 @@ pub extern "C" fn process(input_buffer: usize) -> usize {
 
     let mut return_bytes = Vec::<u8>::with_capacity(output.len() + size_of::<usize>() + 1);
     return_bytes.push(success as u8);
-    return_bytes.extend_from_slice(&(output.len() as usize).to_le_bytes());
+    return_bytes.extend_from_slice(&output.len().to_le_bytes());
     return_bytes.extend_from_slice(output.as_bytes());
 
     share_buffer(return_bytes.into_boxed_slice()) as usize
@@ -97,7 +97,7 @@ fn process_to_result(input_buffer: usize) -> Result<String, String> {
     let input = SHARED_BUFFERS
         .lock()
         .map_err(|e| e.to_string())?
-        .get(&(input_buffer as usize))
+        .get(&{ input_buffer })
         .ok_or(
             "The input buffer does not exist. Use `allocate_shared_buffer` to allocate a buffer.",
         )?
@@ -116,7 +116,7 @@ mod tests {
     fn how_the_host_would_use_this() {
         let input = "Hello, world!";
         let input_bytes = input.as_bytes();
-        let shared_pointer = allocate_shared_buffer(input_bytes.len() as usize);
+        let shared_pointer = allocate_shared_buffer(input_bytes.len());
 
         let shared_buffer =
             unsafe { std::slice::from_raw_parts_mut(shared_pointer as *mut u8, input_bytes.len()) };
@@ -129,7 +129,7 @@ mod tests {
         let output = unsafe {
             std::slice::from_raw_parts(
                 result.add(1 + size_of::<usize>()) as *const u8,
-                length as usize,
+                length,
             )
         };
         assert!(success);
