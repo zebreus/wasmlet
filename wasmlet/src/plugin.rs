@@ -1,30 +1,48 @@
 use std::path::PathBuf;
 
 use thiserror::Error;
-use wasmer::{Instance, Module, Store, imports};
+use wasmer::{
+    CompileError, ExportError, Instance, InstantiationError, Memory, MemoryAccessError, Module,
+    RuntimeError, Store, TypedFunction, WasmPtr, imports,
+};
 
 #[derive(Error, Debug)]
 pub enum PluginError {
-    #[error("Failed to load module: {0}")]
+    #[error("Failed to load plugin: {0}")]
     FailedToLoadModule(std::io::Error),
-    #[error(transparent)]
-    CompileError(#[from] wasmer::CompileError),
-    #[error(transparent)]
-    InstantiationError(#[from] wasmer::InstantiationError),
+    #[error("Failed to compile plugin: {0}")]
+    CompileError(#[from] CompileError),
+    #[error("Failed to instantiate plugin: {0}")]
+    InstantiationError(#[from] InstantiationError),
     #[error("The plugin does not provide the required function `{0}` in its exports ({1})")]
-    PluginDoesNotExportRequiredFunction(String, wasmer::ExportError),
-    #[error(transparent)]
-    RuntimeError(#[from] wasmer::RuntimeError),
-    #[error("Failed to process the string: {0}")]
+    PluginDoesNotExportRequiredFunction(String, ExportError),
+    #[error("The plugin does not export memory: `memory`")]
+    PluginDoesNotExportMemory(#[source] ExportError),
+    #[error("The plugin crashed while allocating a buffer: {0}")]
+    RuntimeErrorWhileFreeingBuffer(#[source] RuntimeError),
+    #[error("The plugin crashed while freeing a buffer: {0}")]
+    RuntimeErrorWhileAllocatingBuffer(#[source] RuntimeError),
+    #[error("The plugin crashed while processing your input: {0}")]
+    RuntimeErrorWhileProcessingText(#[source] RuntimeError),
+    #[error("The plugin failed to process the input: {0}")]
     GuestError(String),
+    #[error("Failed to free a shared buffer")]
+    FailedToFreeSharedBuffer,
+    /// Umbrella error when `process` returns a pointer to something that is not a valid result.
+    #[error(
+        "Process returned a malformed datastructure, please check that the plugin returns a correctly formatted buffer. (1 byte success flag, 4 byte length, length bytes utf8-formatted string)"
+    )]
+    ProcessReturnedMalformedDatastructure(#[source] MemoryAccessError),
+    #[error("The plugin failed to allocate a valid buffer for the input.")]
+    AllocatedBufferCausedMemoryError(#[source] MemoryAccessError),
 }
 
 pub struct Plugin {
-    allocate_shared_buffer: wasmer::TypedFunction<u32, u32>,
-    free_shared_buffer: wasmer::TypedFunction<u32, u32>,
-    process: wasmer::TypedFunction<u32, u32>,
-    instance: wasmer::Instance,
+    allocate_shared_buffer: TypedFunction<u32, WasmPtr<u8>>,
+    free_shared_buffer: TypedFunction<WasmPtr<u8>, u32>,
+    process: TypedFunction<WasmPtr<u8>, WasmPtr<u8>>,
     store: Store,
+    memory: Memory,
 }
 
 impl Plugin {
@@ -34,13 +52,11 @@ impl Plugin {
 
         let mut store = Store::default();
         let module = Module::new(&store, &wasm_bytes)?;
-        // The module doesn't import anything, so we create an empty import object.
-        let import_object = imports! {};
-        let instance = Instance::new(&mut store, &module, &import_object)?;
+        let instance = Instance::new(&mut store, &module, &imports! {})?;
 
-        let allocate_shared_buffer: wasmer::TypedFunction<u32, u32> = instance
+        let allocate_shared_buffer = instance
             .exports
-            .get_typed_function::<u32, u32>(&store, "allocate_shared_buffer")
+            .get_typed_function::<u32, WasmPtr<u8>>(&store, "allocate_shared_buffer")
             .map_err(|e| {
                 PluginError::PluginDoesNotExportRequiredFunction(
                     "allocate_shared_buffer".to_string(),
@@ -49,7 +65,7 @@ impl Plugin {
             })?;
         let free_shared_buffer = instance
             .exports
-            .get_typed_function::<u32, u32>(&store, "free_shared_buffer")
+            .get_typed_function::<WasmPtr<u8>, u32>(&store, "free_shared_buffer")
             .map_err(|e| {
                 PluginError::PluginDoesNotExportRequiredFunction(
                     "free_shared_buffer".to_string(),
@@ -58,66 +74,101 @@ impl Plugin {
             })?;
         let process = instance
             .exports
-            .get_typed_function::<u32, u32>(&store, "process")
+            .get_typed_function::<WasmPtr<u8>, WasmPtr<u8>>(&store, "process")
             .map_err(|e| {
                 PluginError::PluginDoesNotExportRequiredFunction("process".to_string(), e)
             })?;
 
-        // let result = add_one.call(&mut store, &[Value::I64(42)])?;
-        // assert_eq!(result[0], Value::I32(43));
+        let memory = instance
+            .exports
+            .get_memory("memory")
+            .map_err(PluginError::PluginDoesNotExportMemory)?
+            .clone();
 
         return Ok(Plugin {
             allocate_shared_buffer,
             free_shared_buffer,
             process,
             store,
-            instance: instance,
+            memory,
         });
     }
 
-    /// Apply this plugin to a text.
-    pub fn apply(&mut self, text: &str) -> Result<String, PluginError> {
-        let input_bytes = text.as_bytes();
-
-        let shared_memory = self.instance.exports.get_memory("memory").unwrap();
-
-        let input_address = self
+    /// Create a shared buffer in guest memory.
+    ///
+    /// You need to free it afterwards using `free_shared_buffer`.
+    fn create_shared_buffer(&mut self, data: &[u8]) -> Result<WasmPtr<u8>, PluginError> {
+        let address = self
             .allocate_shared_buffer
-            .call(&mut self.store, input_bytes.len() as u32)
-            .unwrap();
-        {
-            let view = shared_memory.view(&self.store);
-            view.write(input_address as u64, input_bytes).unwrap();
-        }
-        let output_address = self.process.call(&mut self.store, input_address).unwrap();
-        let (success, output) = {
-            let view = shared_memory.view(&self.store);
-            let success_address = output_address as u64;
-            let length_address = success_address + 1;
-            let string_address = length_address + 4;
-            let mut success_bytes = [0u8; 1];
-            view.read(success_address, &mut success_bytes).unwrap();
-            let mut length_bytes = [0u8; 4];
-            view.read(length_address, &mut length_bytes).unwrap();
-            let length = u32::from_le_bytes(length_bytes);
-            let output_vec = view
-                .copy_range_to_vec(string_address..string_address + length as u64)
-                .unwrap();
-            let output_string = String::from_utf8(output_vec).unwrap();
-            (success_bytes[0] != 0, output_string)
-        };
+            .call(&mut self.store, data.len() as u32)
+            .map_err(PluginError::RuntimeErrorWhileAllocatingBuffer)?;
+        let view = self.memory.view(&self.store);
+        address
+            .slice(&view, data.len() as u32)
+            .and_then(|slice| slice.write_slice(data))
+            .map_err(PluginError::AllocatedBufferCausedMemoryError)?;
+        Ok(address)
+    }
 
-        // Free the shared buffers.
-        self.free_shared_buffer
-            .call(&mut self.store, input_address)
-            .unwrap();
-        self.free_shared_buffer
-            .call(&mut self.store, output_address)
-            .unwrap();
+    /// Free a shared buffer in guest memory.
+    fn free_shared_buffer(&mut self, address: WasmPtr<u8>) -> Result<(), PluginError> {
+        let result = self
+            .free_shared_buffer
+            .call(&mut self.store, address)
+            .map_err(PluginError::RuntimeErrorWhileFreeingBuffer)?;
+
+        if result == 0 {
+            return Err(PluginError::FailedToFreeSharedBuffer);
+        }
+
+        Ok(())
+    }
+
+    fn process(&mut self, input: WasmPtr<u8>) -> Result<String, PluginError> {
+        let output_ptr = self
+            .process
+            .call(&mut self.store, input)
+            .map_err(PluginError::RuntimeErrorWhileProcessingText)?;
+
+        let view = self.memory.view(&self.store);
+        let success_ptr = output_ptr;
+        let length_ptr: WasmPtr<u32, _> = output_ptr
+            .add_offset(1)
+            .map_err(PluginError::ProcessReturnedMalformedDatastructure)?
+            .cast();
+        let string_ptr = output_ptr
+            .add_offset(1 + 4)
+            .map_err(PluginError::ProcessReturnedMalformedDatastructure)?;
+
+        let success = success_ptr
+            .deref(&view)
+            .read()
+            .map_err(PluginError::ProcessReturnedMalformedDatastructure)?
+            != 0;
+
+        let length = length_ptr
+            .read(&view)
+            .map_err(PluginError::ProcessReturnedMalformedDatastructure)?;
+
+        let string_slice = string_ptr
+            .read_utf8_string(&view, length)
+            .map_err(PluginError::ProcessReturnedMalformedDatastructure)?;
+
+        self.free_shared_buffer(output_ptr)?;
 
         if !success {
-            return Err(PluginError::GuestError(output));
+            return Err(PluginError::GuestError(string_slice));
         }
-        Ok(output)
+        Ok(string_slice)
+    }
+
+    /// Apply this plugin to a text.
+    pub fn apply(&mut self, input: &str) -> Result<String, PluginError> {
+        let input_ptr = self.create_shared_buffer(input.as_bytes())?;
+
+        let result = self.process(input_ptr)?;
+
+        self.free_shared_buffer(input_ptr)?;
+        Ok(result)
     }
 }
