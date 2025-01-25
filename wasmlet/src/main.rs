@@ -1,6 +1,31 @@
 //! # WASMlet
 //!
 //! A simple program that formats text using WASM plugins.
+//!
+//! ## Usage
+//!
+//! Compile the plugin to wasm
+//!
+//! ```sh
+//! cd rainbow
+//! cargo build --release
+//! ```
+//!
+//! Compile WASMlet
+//!
+//! ```sh
+//! cd ../wasmlet
+//! cargo build --release
+//! ```
+//!
+//! Use the plugin with WASMlet
+//!
+//! ```sh
+//! ./target/release/wasmlet -p ../rainbow/target/wasm32-unknown-unknown/release/rainbow.wasm This is a rainbow
+//! ```
+//!
+//! Expected output:
+//!
 #![feature(error_generic_member_access)]
 
 use clap::Parser;
@@ -13,7 +38,8 @@ mod plugin;
 #[command(version, about, long_about = None)]
 struct Args {
     /// The text that should get printed
-    text: String,
+    #[arg(required = true)]
+    text: Vec<String>,
 
     /// WASM plugins that should process the text
     #[arg(short, long)]
@@ -23,7 +49,6 @@ struct Args {
 fn main() -> ExitCode {
     let args = Args::parse();
 
-    eprintln!("Got {} plugins", args.plugins.len());
     let mut plugins = match args
         .plugins
         .into_iter()
@@ -37,7 +62,7 @@ fn main() -> ExitCode {
         }
     };
 
-    let input_text: String = args.text.to_string();
+    let input_text: String = args.text.join(" ");
     let result = match plugins
         .iter_mut()
         .try_fold(input_text, |text, plugin| plugin.apply(&text))
