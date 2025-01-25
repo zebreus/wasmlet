@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 pub(crate) fn rainbow_text(input: &str) -> Result<String, String> {
     // Define ANSI escape codes for rainbow colors
     let colors = [
@@ -16,14 +18,14 @@ pub(crate) fn rainbow_text(input: &str) -> Result<String, String> {
         );
     }
 
-    let mut colorful_text = input
-        .chars()
-        .zip(colors.iter().cycle())
-        .map(|(c, color)| {
-            // Apply the color to the character
-            format!("{}{}", color, c)
-        })
-        .collect::<String>();
+    let mut colorful_text =
+        input
+            .chars()
+            .zip(colors.iter().cycle())
+            .fold(String::new(), |mut output, (c, color)| {
+                let _ = write!(output, "{color}{c}");
+                output
+            });
     colorful_text.push_str("\x1b[0m"); // Reset the color at the end of the string
 
     Ok(colorful_text)
