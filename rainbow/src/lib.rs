@@ -1,3 +1,7 @@
+//! # Rainbow
+//!
+//! A plugin for WASMlet that formats text in rainbow colors using ANSI escape codes.
+
 use std::{
     collections::HashMap,
     sync::{Arc, LazyLock, Mutex},
@@ -53,21 +57,6 @@ fn share_buffer(buffer: Box<[u8]>) -> *const u8 {
 pub extern "C" fn free_shared_buffer(pointer: usize) -> bool {
     let buffer = SHARED_BUFFERS.lock().unwrap().remove(&{ pointer });
     buffer.is_some()
-}
-
-#[repr(C)]
-pub struct ProcessingResult {
-    /// Whether the operation was successfull.
-    ///
-    /// If false, the pointer points to an error message.
-    /// If true, the pointer points to the result.
-    success: bool,
-    /// Pointer to the result or an error message.
-    ///
-    /// The host is responsible for freeing the buffer using `free_shared_buffer`.
-    pointer: u64,
-    /// Length of the result or error message in bytes.
-    length: u64,
 }
 
 /// Process the input buffer and return a new buffer.
@@ -127,10 +116,7 @@ mod tests {
         let length = unsafe { *(result.add(1) as *const [u8; size_of::<usize>()]) };
         let length = usize::from_le_bytes(length);
         let output = unsafe {
-            std::slice::from_raw_parts(
-                result.add(1 + size_of::<usize>()) as *const u8,
-                length,
-            )
+            std::slice::from_raw_parts(result.add(1 + size_of::<usize>()) as *const u8, length)
         };
         assert!(success);
 
