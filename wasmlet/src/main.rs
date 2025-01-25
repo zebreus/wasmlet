@@ -1,8 +1,10 @@
 //! # WASMlet
 //!
 //! A simple program that formats text using WASM plugins.
+#![feature(error_generic_member_access)]
 
 use clap::Parser;
+use plugin::Plugin;
 use std::path::PathBuf;
 mod plugin;
 
@@ -20,6 +22,20 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
+
+    println!("Got {} plugins", args.plugins.len());
+    for plugin in args.plugins {
+        let mut plugin = match Plugin::new(plugin) {
+            Ok(plugin) => plugin,
+            Err(err) => {
+                eprintln!("Failed to load plugin: {}", err);
+                continue;
+            }
+        };
+
+        let text = plugin.apply(&args.text).unwrap();
+        println!("{}", text);
+    }
 
     println!("{}", args.text);
 }
