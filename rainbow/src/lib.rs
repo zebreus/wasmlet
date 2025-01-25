@@ -20,7 +20,7 @@ static SHARED_BUFFERS: LazyLock<Mutex<HashMap<usize, SharedBuffer>>> =
 ///
 /// Will crash if the guest has no more memory available.
 #[unsafe(no_mangle)]
-pub extern "C" fn allocate_shared_buffer(size: u64) -> u64 {
+pub extern "C" fn allocate_shared_buffer(size: usize) -> usize {
     // TODO: Convert to `new_zeroed_slice` once it's stabilized.
     let mut buffer = Box::<[u8]>::new_uninit_slice(size as usize);
     for byte in buffer.iter_mut() {
@@ -29,7 +29,7 @@ pub extern "C" fn allocate_shared_buffer(size: u64) -> u64 {
     // SAFETY: We just initialized the buffer.
     let buffer = unsafe { buffer.assume_init() };
 
-    share_buffer(buffer) as u64
+    share_buffer(buffer) as usize
 }
 
 /// Make a buffer available to the host. Returns the memory address of the buffer.
@@ -50,7 +50,7 @@ fn share_buffer(buffer: Box<[u8]>) -> *const u8 {
 ///
 /// If the guest is currently using the buffer, it will also return 0, but the buffer will be freed once the guest is done with it.
 #[unsafe(no_mangle)]
-pub extern "C" fn free_shared_buffer(pointer: u64) -> u8 {
+pub extern "C" fn free_shared_buffer(pointer: usize) -> u8 {
     let buffer = SHARED_BUFFERS.lock().unwrap().remove(&(pointer as usize));
     match buffer {
         Some(_) => 0,
@@ -74,26 +74,29 @@ pub struct ProcessingResult {
 }
 
 /// Process the input buffer and return a new buffer.
+/// The new buffer needs to be freed with `free_shared_buffer`.
 ///
+/// The first byte of the returned buffer is a boolean indicating whether the operation was successfull.
+/// If false, the string contains an error message, otherwise it contains the result.
+/// The next 4 bytes are the length of the string.
+/// Then the string follows.
 #[unsafe(no_mangle)]
-pub extern "C" fn process(input_buffer: u64) -> ProcessingResult {
+pub extern "C" fn process(input_buffer: usize) -> usize {
     let (success, output) = match process_to_result(input_buffer) {
         Ok(output) => (true, output),
         Err(error) => (false, error),
     };
 
-    let boxed_bytes = output.into_boxed_str().into_boxed_bytes();
-    let output_length = boxed_bytes.len();
-    let output_address = share_buffer(boxed_bytes);
-    ProcessingResult {
-        success,
-        pointer: output_address as u64,
-        length: output_length as u64,
-    }
+    let mut return_bytes = Vec::<u8>::with_capacity(output.len() + size_of::<usize>() + 1);
+    return_bytes.push(success as u8);
+    return_bytes.extend_from_slice(&(output.len() as usize).to_le_bytes());
+    return_bytes.extend_from_slice(output.as_bytes());
+
+    share_buffer(return_bytes.into_boxed_slice()) as usize
 }
 
 /// Decode the input buffer and return the result with String as the error type.
-fn process_to_result(input_buffer: u64) -> Result<String, String> {
+fn process_to_result(input_buffer: usize) -> Result<String, String> {
     let input = SHARED_BUFFERS
         .lock()
         .map_err(|e| e.to_string())?
@@ -116,18 +119,23 @@ mod tests {
     fn how_the_host_would_use_this() {
         let input = "Hello, world!";
         let input_bytes = input.as_bytes();
-        let shared_pointer = allocate_shared_buffer(input_bytes.len() as u64);
+        let shared_pointer = allocate_shared_buffer(input_bytes.len() as usize);
 
         let shared_buffer =
             unsafe { std::slice::from_raw_parts_mut(shared_pointer as *mut u8, input_bytes.len()) };
         shared_buffer.copy_from_slice(input_bytes);
 
-        let result = process(shared_pointer);
-        assert!(result.success);
-
+        let result = process(shared_pointer) as *const u8;
+        let success = unsafe { *result } != 0;
+        let length = unsafe { *(result.add(1) as *const [u8; size_of::<usize>()]) };
+        let length = usize::from_le_bytes(length);
         let output = unsafe {
-            std::slice::from_raw_parts(result.pointer as *const u8, result.length as usize)
+            std::slice::from_raw_parts(
+                result.add(1 + size_of::<usize>()) as *const u8,
+                length as usize,
+            )
         };
+        assert!(success);
 
         let output = std::str::from_utf8(output).unwrap();
         assert_eq!(
