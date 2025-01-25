@@ -31,6 +31,7 @@
 #![feature(error_generic_member_access)]
 
 use clap::Parser;
+use env_logger::Builder;
 use plugin::Plugin;
 use std::{path::PathBuf, process::ExitCode};
 mod plugin;
@@ -49,6 +50,12 @@ struct Args {
 }
 
 fn main() -> ExitCode {
+    Builder::new()
+        .target(env_logger::Target::Stderr)
+        .format_timestamp(None)
+        .format_module_path(false)
+        .init();
+
     let args = Args::parse();
 
     let mut plugins = match args
@@ -59,7 +66,7 @@ fn main() -> ExitCode {
     {
         Ok(plugins) => plugins,
         Err(err) => {
-            eprintln!("{}", err);
+            log::error!("{}", err);
             return 1.into();
         }
     };
@@ -71,7 +78,7 @@ fn main() -> ExitCode {
     {
         Ok(result) => result,
         Err(err) => {
-            eprintln!("{}", err);
+            log::error!("{}", err);
             return 1.into();
         }
     };
