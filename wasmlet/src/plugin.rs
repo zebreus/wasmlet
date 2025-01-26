@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use glob::glob;
 use thiserror::Error;
 use wasmer::{
     CompileError, ExportError, Instance, InstantiationError, Memory, MemoryAccessError, Module,
@@ -39,6 +40,57 @@ pub enum PluginError {
     AllocatedBufferCausedMemoryError(#[source] MemoryAccessError),
 }
 
+fn try_glob(pattern: &str) -> Option<(PathBuf, Vec<u8>)> {
+    let plugin_path = glob(pattern);
+    if let Ok(mut paths) = plugin_path {
+        if let Some(path) = paths.next() {
+            if let Ok(path) = path {
+                if let Ok(file) = std::fs::read(&path) {
+                    return Some((path, file));
+                }
+            }
+        }
+    }
+    return None;
+}
+
+/// Find the source of a plugin.
+///
+/// It will look in the following locations and load the first one where it finds a file:
+///
+/// 1. Try to interpret the specifier as a path to a file.
+/// 2. Try the specifier with an appended `.wasm` extension.
+/// 3. Try to load the specifier relative to the directory specified in `WASMLET_PLUGIN_DIR` (defaults to `/etc/wasmlet/plugins`).
+/// 4. Try to load the specifier from a rust crate next to this project.
+fn load_plugin_source(specifier: &str) -> Result<Vec<u8>, PluginError> {
+    if let Some((path, file)) = try_glob(&format!("{}*", specifier)) {
+        log::debug!("Found plugin at {:?}", path);
+        return Ok(file);
+    }
+
+    let mut plugin_dir = std::env::var("WASMLET_PLUGIN_DIR").unwrap_or("".into());
+    if plugin_dir.is_empty() {
+        plugin_dir = "/etc/wasmlet/plugins".to_string();
+    }
+    if let Some((path, file)) = try_glob(&format!("{}/{}*", plugin_dir, specifier)) {
+        log::debug!("Found plugin at {:?}", path);
+        return Ok(file);
+    }
+
+    if let Some((path, file)) = try_glob(&format!(
+        "../{}/target/wasm32-*/release/{}.wasm",
+        specifier, specifier
+    )) {
+        log::debug!("Found plugin at {:?}", path);
+        return Ok(file);
+    }
+
+    return Err(PluginError::FailedToLoadModule(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        format!("Could not find plugin {}", specifier),
+    )));
+}
+
 pub struct Plugin {
     allocate_shared_buffer: TypedFunction<u32, WasmPtr<u8>>,
     free_shared_buffer: TypedFunction<WasmPtr<u8>, u32>,
@@ -49,8 +101,8 @@ pub struct Plugin {
 
 impl Plugin {
     /// Load the plugin from the given file.
-    pub fn new(wasm_file: PathBuf) -> Result<Self, PluginError> {
-        let wasm_bytes = std::fs::read(wasm_file).map_err(PluginError::FailedToLoadModule)?;
+    pub fn new(specifier: impl AsRef<str>) -> Result<Self, PluginError> {
+        let wasm_bytes = load_plugin_source(specifier.as_ref())?;
 
         let mut store = Store::default();
         let module = Module::new(&store, &wasm_bytes)?;

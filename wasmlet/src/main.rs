@@ -33,12 +33,20 @@
 use clap::Parser;
 use env_logger::Builder;
 use plugin::Plugin;
-use std::{path::PathBuf, process::ExitCode};
+use std::process::ExitCode;
 mod plugin;
 
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
+#[clap(after_help = "
+\x1b[1;4mPLUGIN RESOLUTION:\x1b[0m
+  WASMlet uses the following strategy to find plugins:
+  1. Try to interpret the specifier as a path to a file.
+  2. Try the specifier with an appended `.wasm` extension.
+  3. Try to load the specifier relative to the directory specified in `WASMLET_PLUGIN_DIR` (defaults to `/etc/wasmlet/plugins`).
+  4. Try to load the specifier from a rust crate next to this project.
+")]
 struct Args {
     /// The text that should get printed
     #[arg(required = true)]
@@ -46,7 +54,7 @@ struct Args {
 
     /// WASM plugins that should process the text
     #[arg(short, long)]
-    plugins: Vec<PathBuf>,
+    plugins: Vec<String>,
 }
 
 fn main() -> ExitCode {
@@ -60,7 +68,7 @@ fn main() -> ExitCode {
 
     let mut plugins = match args
         .plugins
-        .into_iter()
+        .iter()
         .map(Plugin::new)
         .collect::<Result<Vec<_>, _>>()
     {
