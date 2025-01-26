@@ -58,11 +58,40 @@ fn try_glob(pattern: &str) -> Option<(PathBuf, Vec<u8>)> {
 ///
 /// It will look in the following locations and load the first one where it finds a file:
 ///
-/// 1. Try to interpret the specifier as a path to a file.
-/// 2. Try the specifier with an appended `.wasm` extension.
-/// 3. Try to load the specifier relative to the directory specified in `WASMLET_PLUGIN_DIR` (defaults to `/etc/wasmlet/plugins`).
-/// 4. Try to load the specifier from a rust crate next to this project.
+/// 1. If the specifier starts with `https://`: Try to download the file and abort if it fails.
+/// 2. Try to interpret the specifier as a path to a file.
+/// 3. Try the specifier with an appended `.wasm` extension.
+/// 4. Try to load the specifier relative to the directory specified in `WASMLET_PLUGIN_DIR` (defaults to `/etc/wasmlet/plugins`).
+/// 5. Try to load the specifier from a rust crate next to this project.
 fn load_plugin_source(specifier: &str) -> Result<Vec<u8>, PluginError> {
+    if specifier.starts_with("https://") {
+        let mut response = ureq::get(specifier)
+            .header("Accept", "application/wasm")
+            .call()
+            .map_err(|_| {
+                // TODO: Rework error types
+                PluginError::FailedToLoadModule(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "Failed to download plugin",
+                ))
+            })?;
+        if response.headers().get("Content-Type").map(|v| v.as_bytes()) != Some(b"application/wasm")
+        {
+            return Err(PluginError::FailedToLoadModule(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Server did not provide an `application/wasm` file",
+            )));
+        }
+        let wasm_from_the_internet = response.body_mut().read_to_vec().map_err(|_| {
+            PluginError::FailedToLoadModule(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Failed to download plugin",
+            ))
+        })?;
+        log::debug!("Downloaded plugin from the internet");
+        return Ok(wasm_from_the_internet);
+    }
+
     if let Some((path, file)) = try_glob(&format!("{}*", specifier)) {
         log::debug!("Found plugin at {:?}", path);
         return Ok(file);
