@@ -1,0 +1,10 @@
+[package]
+name = "bigfont"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+figfont = { version = "0.1.1", default-features = false }
