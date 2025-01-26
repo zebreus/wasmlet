@@ -50,7 +50,7 @@ struct Args {
 }
 
 fn main() -> ExitCode {
-    Builder::new()
+    Builder::from_default_env()
         .target(env_logger::Target::Stderr)
         .format_timestamp(None)
         .format_module_path(false)
