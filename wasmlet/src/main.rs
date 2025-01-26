@@ -1,4 +1,4 @@
-//! # WASMlet
+//! # ![WASMlet](https://github.com/user-attachments/assets/acd1daf0-5d2a-46e2-a551-2f0d82c76624)
 //!
 //! A simple program that formats text using WASM plugins.
 //!
@@ -28,7 +28,7 @@
 //!
 //! Expected output:
 //!
-//! ![expected-output](https://github.com/user-attachments/assets/28f5eea0-2c33-4d7d-bdfc-787c1d2513e1)
+//! ![Screenshot of a terminal showing the text `WASMlet` in big colored letters](https://github.com/user-attachments/assets/b469de43-f2fc-4225-96b0-4252afbde4a8)
 //!
 //! ## Plugin Resolution
 //!
