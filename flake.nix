@@ -8,6 +8,10 @@
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    naersk = {
+      url = "github:nix-community/naersk";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -16,6 +20,7 @@
       nixpkgs,
       fenix,
       flake-utils,
+      naersk
     }:
     flake-utils.lib.eachDefaultSystem (
       system:
@@ -31,7 +36,7 @@
         rustToolchain = fenixPkgs.combine [
           fenixPkgs.complete.toolchain
           fenixPkgs.targets.wasm32-unknown-unknown.stable.completeToolchain
-
+          fenixPkgs.targets.wasm32-unknown-unknown.latest.rust-std
           (fenixPkgs.complete.withComponents [
             "cargo"
             "clippy"
@@ -40,6 +45,7 @@
             "rustfmt"
           ])
         ];
+        rustWasmTarget = "wasm32-unknown-unknown";
       in
       rec {
         name = "wasmer-interview-challenge";
@@ -56,6 +62,24 @@
           ];
         };
 
+        packages.rainbow = (naersk.lib.${system}.override {
+          cargo = rustToolchain;
+          rustc = rustToolchain;
+        }).buildPackage {
+          src = ./rainbow;
+          CARGO_BUILD_TARGET = rustWasmTarget;
+          copyLibs = true;
+          copyBins = false;
+        };
+        packages.bigfont = (naersk.lib.${system}.override {
+          cargo = rustToolchain;
+          rustc = rustToolchain;
+        }).buildPackage {
+          src = ./bigfont;
+          CARGO_BUILD_TARGET = rustWasmTarget;
+          copyLibs = true;
+          copyBins = false;
+        }; 
         packages.wasmlet =
           (pkgs.makeRustPlatform {
             cargo = rustToolchain;
@@ -80,6 +104,7 @@
                 homepage = "https://github.com/zebreus/wasmer-interview-challenge";
                 license = pkgs.lib.licenses.agpl3Plus;
               };
+              target = "wasm32-unknown-unknown";
             };
         packages.default = packages.wasmlet;
 
